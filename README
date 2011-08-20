@@ -1,0 +1,29 @@
+Quick little implementation of CHR in Clojure
+
+Not tested. Don't build bridges that depend on this code.
+
+examples of the embedding:
+
+(def leq-rules (exists [x y z]
+                       [{:head [[:remove [:leq x x]]]}
+                        {:head [[:remove [:leq x y]]
+                                [:remove [:leq y x]]]
+                         :body [[:equals x y]]}
+                        {:head [[:keep [:leq x y]]
+                                [:keep [:leq y z]]]
+                         :body [[:leq x z]]}]))
+
+(defn generate-leq-facts
+  [pairs-o-symbols]
+  (unwrap (awake leq-rules (map (fn [[l u]] [:leq l u]) pairs-o-symbols))))
+
+
+(def gcd-rules (exists [n m]
+                       [{:head [[:remove [:gcd 0]]]}
+                        {:head [[:keep [:gcd n]]
+                                [:remove [:gcd m]]]
+                         :guards [(chrfn [m n] (>= m n))]
+                         :bodyfn (chrfn [m n] [[:gcd (- m n)]])}]))
+
+(defn find-gcd [n1 n2]
+  (unwrap (awake gcd-rules [[:gcd n1] [:gcd n2]])))
