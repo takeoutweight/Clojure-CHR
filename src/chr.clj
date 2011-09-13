@@ -64,6 +64,7 @@
 
 (defn find-matches
   "Returns a seq of substitution maps, arity of pattern must be matched."
+  ([store pattern] (find-matches store {} [] pattern))
   ([store guards pattern] (find-matches store {} guards pattern))
   ([store substs guards [term & next-terms]]     
      (no-bench
