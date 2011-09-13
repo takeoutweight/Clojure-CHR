@@ -1,6 +1,7 @@
 (ns chr
   (:use [chr.debug])
-  (:require [clojure.set :as set]))
+  (:require [clojure.set :as set]
+            [clojure.walk :as walk]))))
 
 (defn variable? [x]
   (::variable (meta x)))
