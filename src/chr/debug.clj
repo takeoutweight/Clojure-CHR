@@ -3,7 +3,7 @@
 
 (def ^:dynamic *trace-set* #{})
 (def ^:dynamic *trace-ignore* #{})
-#_(defn trace
+(defn trace
   ([labels strs]
      (trace labels strs (last strs)))
   ([labels strs expr]
@@ -17,7 +17,7 @@
      expr))
 
 ;comment out traces at the source level:
-(defmacro trace
+#_(defmacro trace
   ([labels strs] (last strs))
   ([labels strs expr] expr))
 
