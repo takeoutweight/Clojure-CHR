@@ -148,6 +148,8 @@
 (defn awake
   ([rules initial-constraints]
      (awake {} rules (first initial-constraints) (rest initial-constraints) #{} nil))
+  ([rules store initial-constraints]
+     (awake store rules (first initial-constraints) (rest initial-constraints) #{} nil))
   ([store rules active-constraint queued-constraints prop-history next-rule-matches]
      (if (and active-constraint (not @kill))
        (let [t1 (System/nanoTime)
