@@ -1,7 +1,7 @@
 (ns chr
   (:use [chr.debug])
   (:require [clojure.set :as set]
-            [clojure.walk :as walk]))))
+            [clojure.walk :as walk]))
 
 (defn variable? [x]
   (::variable (meta x)))
@@ -196,8 +196,8 @@
   `[~args (fn ~args ~@body)])
 
 (defmacro rule
-  ([head body]
-     `(rule ~(gensym "rule-") ~head ~body))
+  ([head body] 
+     `(rule ~(symbol (str "rule-" (mod (hash [head body]) 10000))) ~head ~body))
   ([name head body]
      (let [occurrences (vec (map vec (filter (fn [[op pat]] (#{:- :+} op)) (partition 2 head))))
            guards   (vec (map second (filter (fn [[op pat]] (= :when  op)) (partition 2 head))))       
