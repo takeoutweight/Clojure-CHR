@@ -5,12 +5,12 @@ Not tested. Don't build bridges that depend on this code.
 examples of the embedding:
 
 (def leq-rules (exists [x y z]
-                       [{:head [[:remove [:leq x x]]]}
-                        {:head [[:remove [:leq x y]]
-                                [:remove [:leq y x]]]
+                       [{:head [[:- [:leq x x]]]}
+                        {:head [[:- [:leq x y]]
+                                [:- [:leq y x]]]
                          :body [[:equals x y]]}
-                        {:head [[:keep [:leq x y]]
-                                [:keep [:leq y z]]]
+                        {:head [[:+ [:leq x y]]
+                                [:+ [:leq y z]]]
                          :body [[:leq x z]]}]))
 
 (defn generate-leq-facts
@@ -19,9 +19,9 @@ examples of the embedding:
 
 
 (def gcd-rules (exists [n m]
-                       [{:head [[:remove [:gcd 0]]]}
-                        {:head [[:keep [:gcd n]]
-                                [:remove [:gcd m]]]
+                       [{:head [[:- [:gcd 0]]]}
+                        {:head [[:+ [:gcd n]]
+                                [:- [:gcd m]]]
                          :guards [(chrfn [m n] (>= m n))]
                          :bodyfn (chrfn [m n] [[:gcd (- m n)]])}]))
 

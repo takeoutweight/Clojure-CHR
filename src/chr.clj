@@ -194,6 +194,20 @@
   [args & body]
   `[~args (fn ~args ~@body)])
 
+(defmacro rule
+  ([head body]
+    `(rule ~(gensym "rule-") ~head ~body))
+  ([name head body]
+     (let [variables (into #{} (for [occurrence (map second (partition 2 head))
+                                     term occurrence
+                                     :when (symbol? term)] term))]
+       `{:name ~name
+         :head
+         :guards
+         :body})))
+
+;---------------- Examples ---------------------
+
 (def leq-rules (exists [x y z a b eq eq1 eq2 c d]
                        [{:name :Reflexivity
                          :head [[:- [:leq d d]]]}
