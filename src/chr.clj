@@ -196,15 +196,21 @@
 
 (defmacro rule
   ([head body]
-    `(rule ~(gensym "rule-") ~head ~body))
+     `(rule ~(gensym "rule-") ~head ~body))
   ([name head body]
-     (let [variables (into #{} (for [occurrence (map second (partition 2 head))
-                                     term occurrence
-                                     :when (symbol? term)] term))]
-       `{:name ~name
-         :head
-         :guards
-         :body})))
+     (let [occurrences (vec (map vec (filter (fn [[op pat]] (#{:- :+} op)) (partition 2 head))))
+           guards   (vec (map second (filter (fn [[op pat]] (= :when  op)) (partition 2 head))))       
+           variables (into #{} (for [pattern (map second occurrences)
+                                     term pattern
+                                     :when (symbol? term)] term))
+           collect-vars (fn [form] (walk/postwalk (fn [f] (cond (variables f) #{f}
+                                                                (coll? f) (apply set/union f)
+                                                                :else nil)) form))]
+       `(exists ~(vec variables)
+                {:name (quote ~name)
+                 :head ~occurrences
+                 :guards [~@(map (fn [g] `(chrfn [~@(collect-vars g)] ~g)) guards)]
+                 :bodyfn (chrfn [~@(collect-vars body)]~body)}))))
 
 ;---------------- Examples ---------------------
 
