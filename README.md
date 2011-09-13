@@ -5,7 +5,7 @@ _Not tested. Don't build bridges that depend on this code._
 Use the RULE macro for CHR-like definitions:
 --------------------------------------------
 
-(def narrowing-rules
+`(def narrowing-rules
   [(rule range-lower-bound
          [:- [:Range m1 M1]
           :- [:Range m2 M2]
@@ -27,11 +27,11 @@ Use the RULE macro for CHR-like definitions:
                      (< M m))]
          [[:Error (str "Empty range: [" m "," M "]")]])])
 
-;(unwrap (awake narrowing-rules [[:Range 30 90] [:Range 49 60] [:Range 'some-unground-var 59]]))
+;(unwrap (awake narrowing-rules [[:Range 30 90] [:Range 49 60] [:Range 'some-unground-var 59]]))`
 
 The RULE macro is just sugar; rules can be constructed directly:
 
-(def leq-rules (exists [x y z]
+`(def leq-rules (exists [x y z]
                        [{:head [[:- [:leq x x]]]}
                         {:head [[:- [:leq x y]]
                                 [:- [:leq y x]]]
@@ -42,10 +42,10 @@ The RULE macro is just sugar; rules can be constructed directly:
 
 (defn generate-leq-facts
   [pairs-o-symbols]
-  (unwrap (awake leq-rules (map (fn [[l u]] [:leq l u]) pairs-o-symbols))))
+  (unwrap (awake leq-rules (map (fn [[l u]] [:leq l u]) pairs-o-symbols))))`
 
 
-(def gcd-rules (exists [n m]
+`(def gcd-rules (exists [n m]
                        [{:head [[:- [:gcd 0]]]}
                         {:head [[:+ [:gcd n]]
                                 [:- [:gcd m]]]
@@ -53,4 +53,5 @@ The RULE macro is just sugar; rules can be constructed directly:
                          :bodyfn (chrfn [m n] [[:gcd (- m n)]])}]))
 
 (defn find-gcd [n1 n2]
-  (unwrap (awake gcd-rules [[:gcd n1] [:gcd n2]])))
+  (unwrap (awake gcd-rules [[:gcd n1] [:gcd n2]])))`
+
