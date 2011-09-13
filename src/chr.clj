@@ -142,26 +142,25 @@
                                                               (map second (:head rule))))))]
     [rule sibling-substs s0]))
 
+(def kill (atom false))
+
 (defn awake
   ([rules initial-constraints]
      (awake {} rules (first initial-constraints) (rest initial-constraints) #{} nil))
   ([store rules active-constraint queued-constraints prop-history next-rule-matches]
-     (if active-constraint
+     (if (and active-constraint (not @kill))
        (let [t1 (System/nanoTime)
              [[fired-rule substs next-store] & next-rule-matches]
              , (or next-rule-matches
-                   (filter (fn [[rule substs _]] (or (not-empty (filter (fn [[op _]] (= op :remove)) (:head rule)))
-                                                     (not (prop-history [rule substs]))))
+                   (filter (fn [[rule substs _]] (not (prop-history [rule substs])))
                            (matching-rule-seq store rules active-constraint)))]
          (if (and (empty? (bench :find-matches (find-matches store [] active-constraint))) fired-rule) 
            (let [_ (bench-here :awake-found t1)
                  t2 (System/nanoTime)
-                 next-history (if (not-empty (filter (fn [[op _]] (= op :remove)) (:head fired-rule)))
-                                prop-history
-                                (trace [:awake] ["updating history to: " (into prop-history [[fired-rule substs]])]))
+                 next-history (trace [:awake :history] ["updating history to: " (into prop-history [[fired-rule substs]])])
                  _ (trace [:awake] [(map (fn [[op pat]] [op (rewrite pat substs)]) (:head fired-rule))])
-                 {kept-awake [:keep true],
-                  kept-asleep [:keep false]}
+                 {kept-awake [:+ true],
+                  kept-asleep [:+ false]}
                  ,  (group-by (fn [[op pat]] [op (= pat active-constraint)])
                               (map (fn [[op pat]] [op (rewrite pat substs)]) (:head fired-rule)))
                  [next-active & next-queued] (concat
@@ -170,13 +169,13 @@
                                                       (when-let [[args bfn] (:bodyfn fired-rule)]
                                                         (apply bfn (rewrite args substs))))
                                               queued-constraints)]
-             #_(trace [:awake :firing] ["store:" (unwrap store) "with"
+             (trace [:awake :firing] [(:name fired-rule) "on store:" (unwrap store) "with"
                                       (concat (map #(rewrite % substs) (:body fired-rule))
                                               (when-let [[args bfn] (:bodyfn fired-rule)]
                                                 (apply bfn (rewrite args substs)))) "with subs:" substs])
              (bench-here (:name fired-rule) t2)
              #_"If no constraints to be removed, maintain same store and position within the iterator."
-             (if (empty? (filter (fn [[op _]] (= op :remove)) (:head fired-rule)))
+             (if (empty? (filter (fn [[op _]] (= op :-)) (:head fired-rule)))
                (recur (reduce impose-constraint store (map second kept-asleep))
                       rules next-active next-queued next-history next-rule-matches)
                (recur (reduce impose-constraint next-store (map second kept-asleep))
@@ -195,38 +194,37 @@
   [args & body]
   `[~args (fn ~args ~@body)])
 
-
 (def leq-rules (exists [x y z a b eq eq1 eq2 c d]
                        [{:name :Reflexivity
-                         :head [[:remove [:leq d d]]]}
+                         :head [[:- [:leq d d]]]}
                         {:name :Transitivity
-                         :head [[:keep [:leq x y]]
-                                [:keep [:leq y z]]]
+                         :head [[:+ [:leq x y]]
+                                [:+ [:leq y z]]]
                          :body [[:leq x z]]}
                         {:name :Antisymmetry
-                         :head [[:remove [:leq x y]]
-                                [:remove [:leq y x]]]
+                         :head [[:- [:leq x y]]
+                                [:- [:leq y x]]]
                          :bodyfn (chrfn [x y] (if (< (hash x) (hash y))
                                                 [[:equivclass x y]]
                                                 [[:equivclass y x]]))}
                         #_"Herbrand equality:"       
                         {:name :Eq-rewrite1
-                         :head [[:remove [:leq x b]]
-                                [:keep [:equivclass eq x]]]
+                         :head [[:- [:leq x b]]
+                                [:+ [:equivclass eq x]]]
                          :body [[:leq eq b]]}
                         {:name :Eq-rewrite2
-                         :head [[:remove [:leq b x]]
-                                [:keep [:equivclass eq x]]]
+                         :head [[:- [:leq b x]]
+                                [:+ [:equivclass eq x]]]
                          :body [[:leq b eq]]}
                         {:name :Eq-reflexivity
-                         :head [[:remove [:equivclass d d]]]}
+                         :head [[:- [:equivclass d d]]]}
                         {:name :Eq-transitivity
-                         :head [[:remove [:equivclass y x]]
-                                [:keep [:equivclass eq y]]]
+                         :head [[:- [:equivclass y x]]
+                                [:+ [:equivclass eq y]]]
                          :body          [[:equivclass eq x]]}
                         {:name :Eq-simplification
-                         :head [[:remove [:equivclass eq1 x]]
-                                [:remove [:equivclass eq2 x]]]
+                         :head [[:- [:equivclass eq1 x]]
+                                [:- [:equivclass eq2 x]]]
                          :bodyfn (chrfn [x eq1 eq2] [[:equivclass (if (< (hash eq1) (hash eq2)) eq1 eq2) x]])}]))
 
 (defn solve-leq-chain
@@ -238,9 +236,9 @@
 
 
 (def gcd-rules (exists [n m]
-                       [{:head [[:remove [:gcd 0]]]}
-                        {:head [[:keep [:gcd n]]
-                                [:remove [:gcd m]]]
+                       [{:head [[:- [:gcd 0]]]}
+                        {:head [[:+ [:gcd n]]
+                                [:- [:gcd m]]]
                          :guards [(chrfn [m n] (>= m n))]
                          :bodyfn (chrfn [m n] [[:gcd (- m n)]])}]))
 
