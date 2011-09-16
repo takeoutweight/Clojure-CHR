@@ -40,15 +40,6 @@
    :impose-constraint
    (update-in store (drop-last constraint) set/union #{(last constraint)})))
 
-(defn unwrap
-  "Returns the sequence of constraints comprised by a given store.
-   Nested stores are not recursively unwrapped.
-   assert: (= some-store (reduce impose-constraint {} (unwrap some-store)))"
-  [store]
-  (if (set? store)
-    (map vector store)
-    (mapcat (fn [[k v]] (map #(vec (concat [k] %)) (unwrap v))) store)))
-
 (defn sort-guards
   "given a collection of variables that will be grounded, sorts into
    [grounded, ungrounded] guards--so you know which are possible to check."
@@ -61,6 +52,15 @@
                                                    (ground-set %)) args))
                      guards)]
      [ground unground])))
+
+(defn unwrap
+  "Returns the sequence of constraints comprised by a given store.
+   Nested stores are not recursively unwrapped.
+   assert: (= some-store (reduce impose-constraint {} (unwrap some-store)))"
+  [store]
+  (if (set? store)
+    (map vector store)
+    (mapcat (fn [[k v]] (map #(vec (concat [k] %)) (unwrap v))) store)))
 
 (defn find-matches
   "Returns a seq of substitution maps, arity of pattern must be matched."
@@ -78,11 +78,22 @@
                                 (map #(assoc substs term %) store))
                                (if (get store term) [substs] []))
                              [])
-         (set? store) ()
+         (= ::& term) (let [rest (first next-terms) 
+                            [grnd-guards _] (sort-guards guards (conj (keys substs) rest))]
+                        (filter
+                         (fn [next-subs] (every? (fn [[args gfn]]
+                                                   (apply gfn (rewrite args next-subs)))
+                                                 grnd-guards))
+                         (map #(assoc substs rest %) (unwrap store))))
+         (set? store) (if (= (first next-terms) ::&)
+                        (let [rest (second next-terms)]
+                          (if (variable? term)
+                            (filter
+                             #(every? (fn [[args gfn]] (apply gfn (rewrite args %))) guards)
+                             (map #(assoc substs term % rest []) store))
+                            (if (get store term) [(assoc substs rest [])] [])))
+                        ())
          (variable? term) (let [[grnd-guards ungrnd-guards] (sort-guards guards (conj (keys substs) term))]
-                            (if (not (empty? grnd-guards))
-                              (map first grnd-guards)
-                              (map first ungrnd-guards))
                             (mapcat (fn [[k v]]
                                       (let [next-substs (assoc substs term k)]
                                         (if (every? (fn [[args gfn]]
@@ -202,7 +213,11 @@
   ([head body] 
      `(rule ~(symbol (str "rule-" (mod (hash [head body]) 10000))) ~head ~body))
   ([name head body]
-     (let [occurrences (vec (map vec (filter (fn [[op pat]] (#{:- :+} op)) (partition 2 head))))
+     (let [occurrences (vec (map (fn [[op pat]] [op (walk/postwalk
+                                                     (fn [t] (get {'& ::&
+                                                                   '_ (variable (gensym "_"))} t t))
+                                                     pat)])
+                                 (filter (fn [[op pat]] (#{:- :+} op)) (partition 2 head))))
            guards   (vec (map second (filter (fn [[op pat]] (= :when  op)) (partition 2 head))))       
            variables (into #{} (for [pattern (map second occurrences)
                                      term pattern
