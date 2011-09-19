@@ -74,7 +74,7 @@
          (nil? next-terms) (if (set? store)
                              (if (variable? term)
                                (filter
-                                #(every? (fn [[args gfn]] (apply gfn (rewrite args %))) guards)
+                                #(every? (fn [[args gfn]] (apply gfn store (rewrite args %))) guards)
                                 (map #(assoc substs term %) store))
                                (if (get store term) [substs] []))
                              [])
@@ -82,14 +82,14 @@
                             [grnd-guards _] (sort-guards guards (conj (keys substs) rest))]
                         (filter
                          (fn [next-subs] (every? (fn [[args gfn]]
-                                                   (apply gfn (rewrite args next-subs)))
+                                                   (apply gfn store (rewrite args next-subs)))
                                                  grnd-guards))
                          (map #(assoc substs rest %) (unwrap store))))
          (set? store) (if (= (first next-terms) ::&)
                         (let [rest (second next-terms)]
                           (if (variable? term)
                             (filter
-                             #(every? (fn [[args gfn]] (apply gfn (rewrite args %))) guards)
+                             #(every? (fn [[args gfn]] (apply gfn store (rewrite args %))) guards)
                              (map #(assoc substs term % rest []) store))
                             (if (get store term) [(assoc substs rest [])] [])))
                         ())
@@ -97,7 +97,7 @@
                             (mapcat (fn [[k v]]
                                       (let [next-substs (assoc substs term k)]
                                         (if (every? (fn [[args gfn]]
-                                                      (apply gfn (rewrite args next-substs)))
+                                                      (apply gfn store (rewrite args next-substs)))
                                                     grnd-guards)
                                           (find-matches v
                                                         next-substs
@@ -138,7 +138,7 @@
    returns a seq of [fired-rule, subs, next-store] tuples."
   [store rules active-constraint]
   (for [rule rules
-        [_op pattern] (:head rule) 
+        [_op pattern] (:head rule)
         [grnd-guards ungrnd-guards] (bench :sort-guards
                                            [(sort-guards (:guards rule) pattern)])
         next-substs (bench :find-matches
@@ -182,12 +182,12 @@
                                               (concat (map #(rewrite % substs) (:body fired-rule))
                                                       (map second kept-awake)
                                                       (when-let [[args bfn] (:bodyfn fired-rule)]
-                                                        (apply bfn (rewrite args substs))))
+                                                        (apply bfn store (rewrite args substs))))
                                               queued-constraints)]
              (trace [:awake :firing] [(:name fired-rule) "on store:" (unwrap store) "with"
                                       (concat (map #(rewrite % substs) (:body fired-rule))
                                               (when-let [[args bfn] (:bodyfn fired-rule)]
-                                                (apply bfn (rewrite args substs)))) "with subs:" substs])
+                                                (apply bfn store (rewrite args substs)))) "with subs:" substs])
              (bench-here (:name fired-rule) t2)
              #_"If no constraints to be removed, maintain same store and position within the iterator."
              (if (empty? (filter (fn [[op _]] (= op :-)) (:head fired-rule)))
@@ -206,8 +206,11 @@
        store)))
 
 (defmacro chrfn
+  "chrfns must be of the form
+   (chrfn [store arg1 ...argn]) where store is
+   the current state of the constraint store"
   [args & body]
-  `[~args (fn ~args ~@body)])
+  `[~(vec (drop 1 args)) (fn ~args ~@body)])
 
 (defmacro rule
   ([head body] 
@@ -218,7 +221,9 @@
                                                                    '_ (variable (gensym "_"))} t t))
                                                      pat)])
                                  (filter (fn [[op pat]] (#{:- :+} op)) (partition 2 head))))
-           guards   (vec (map second (filter (fn [[op pat]] (= :when  op)) (partition 2 head))))       
+           guards (vec (map second (filter (fn [[op pat]] (= :when  op)) (partition 2 head))))
+           store-alias (or (last (map second (filter (fn [[op pat]] (= :store op)) (partition 2 head))))
+                           'store)
            variables (into #{} (for [pattern (map second occurrences)
                                      term pattern
                                      :when (symbol? term)] term))
@@ -228,8 +233,8 @@
        `(exists ~(vec variables)
                 {:name (quote ~name)
                  :head ~occurrences
-                 :guards [~@(map (fn [g] `(chrfn [~@(collect-vars g)] ~g)) guards)]
-                 :bodyfn (chrfn [~@(collect-vars body)]~body)}))))
+                 :guards [~@(map (fn [g] `(chrfn [~store-alias ~@(collect-vars g)] ~g)) guards)]
+                 :bodyfn (chrfn [~store-alias ~@(collect-vars body)]~body)}))))
 
 ;---------------- Examples ---------------------
 
@@ -243,9 +248,9 @@
                         {:name :Antisymmetry
                          :head [[:- [:leq x y]]
                                 [:- [:leq y x]]]
-                         :bodyfn (chrfn [x y] (if (< (hash x) (hash y))
-                                                [[:equivclass x y]]
-                                                [[:equivclass y x]]))}
+                         :bodyfn (chrfn [_ x y] (if (< (hash x) (hash y))
+                                                  [[:equivclass x y]]
+                                                  [[:equivclass y x]]))}
                         #_"Herbrand equality:"       
                         {:name :Eq-rewrite1
                          :head [[:- [:leq x b]]
@@ -264,7 +269,7 @@
                         {:name :Eq-simplification
                          :head [[:- [:equivclass eq1 x]]
                                 [:- [:equivclass eq2 x]]]
-                         :bodyfn (chrfn [x eq1 eq2] [[:equivclass (if (< (hash eq1) (hash eq2)) eq1 eq2) x]])}]))
+                         :bodyfn (chrfn [_ x eq1 eq2] [[:equivclass (if (< (hash eq1) (hash eq2)) eq1 eq2) x]])}]))
 
 (defn solve-leq-chain
   "all variables equal on x1 <= x2 <= ... xn <= x1"
@@ -278,8 +283,8 @@
                        [{:head [[:- [:gcd 0]]]}
                         {:head [[:+ [:gcd n]]
                                 [:- [:gcd m]]]
-                         :guards [(chrfn [m n] (>= m n))]
-                         :bodyfn (chrfn [m n] [[:gcd (- m n)]])}]))
+                         :guards [(chrfn [_ m n] (>= m n))]
+                         :bodyfn (chrfn [_ m n] [[:gcd (- m n)]])}]))
 
 (defn find-gcd [n1 n2]
   (unwrap (awake gcd-rules [[:gcd n1] [:gcd n2]])))
