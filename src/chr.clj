@@ -172,7 +172,9 @@
          (if (and (empty? (bench :find-matches (find-matches store [] active-constraint))) fired-rule) 
            (let [_ (bench-here :awake-found t1)
                  t2 (System/nanoTime)
-                 next-history (trace [:awake :history] ["updating history to: " (into prop-history [[fired-rule substs]])])
+                 next-history (if (not-empty (filter (fn [[op _]] (= op :-)) (:head fired-rule)))
+                                prop-history
+                                (into prop-history [[fired-rule substs]]))
                  _ (trace [:awake] [(map (fn [[op pat]] [op (rewrite pat substs)]) (:head fired-rule))])
                  {kept-awake [:+ true],
                   kept-asleep [:+ false]}
