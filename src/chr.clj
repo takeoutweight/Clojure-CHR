@@ -139,8 +139,8 @@
   [store rules active-constraint]
   (for [rule rules
         [_op pattern] (:head rule)
-        [grnd-guards ungrnd-guards] (bench :sort-guards
-                                           [(sort-guards (:guards rule) pattern)])
+        :let [[grnd-guards ungrnd-guards] (bench :sort-guards
+                                                 (sort-guards (:guards rule) pattern))]
         next-substs (bench :find-matches
                            (find-matches (impose-constraint {} active-constraint) grnd-guards pattern))
         [sibling-substs s0] (trace [:awake :search]
@@ -184,12 +184,12 @@
                                               (concat (map #(rewrite % substs) (:body fired-rule))
                                                       (map second kept-awake)
                                                       (when-let [[args bfn] (:bodyfn fired-rule)]
-                                                        (apply bfn store (rewrite args substs))))
+                                                        (apply bfn next-store (rewrite args substs))))
                                               queued-constraints)]
              (trace [:awake :firing] [(:name fired-rule) "on store:" (unwrap store) "with"
                                       (concat (map #(rewrite % substs) (:body fired-rule))
                                               (when-let [[args bfn] (:bodyfn fired-rule)]
-                                                (apply bfn store (rewrite args substs)))) "with subs:" substs])
+                                                (apply bfn next-store (rewrite args substs)))) "with subs:" substs])
              (bench-here (:name fired-rule) t2)
              #_"If no constraints to be removed, maintain same store and position within the iterator."
              (if (empty? (filter (fn [[op _]] (= op :-)) (:head fired-rule)))
