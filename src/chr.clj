@@ -62,11 +62,13 @@
     (map vector store)
     (mapcat (fn [[k v]] (map #(vec (concat [k] %)) (unwrap v))) store)))
 
-(defn find-matches
-  "Returns a seq of substitution maps, arity of pattern must be matched."
-  ([store pattern] (find-matches store {} [] pattern))
-  ([store guards pattern] (find-matches store {} guards pattern))
-  ([store substs guards [term & next-terms]]     
+(defn satisfies-guards?
+  [root-store substs guards]
+  (every? (fn [[args gfn]] (trace [:guard-call] ["store:" root-store] (apply gfn root-store (rewrite args substs)))) guards))
+
+(defn find-matches*
+  "Returns a seq of substitution maps, arity of pattern must be matched."  
+  ([root-store store substs guards [term & next-terms]]     
      (no-bench
       :find-matches
       (let [term (get substs term term)]
@@ -74,44 +76,47 @@
          (nil? next-terms) (if (set? store)
                              (if (variable? term)
                                (filter
-                                #(every? (fn [[args gfn]] (apply gfn store (rewrite args %))) guards)
+                                #(satisfies-guards? root-store % guards)
                                 (map #(assoc substs term %) store))
                                (if (get store term) [substs] []))
                              [])
          (= ::& term) (let [rest (first next-terms) 
                             [grnd-guards _] (sort-guards guards (conj (keys substs) rest))]
                         (filter
-                         (fn [next-subs] (every? (fn [[args gfn]]
-                                                   (apply gfn store (rewrite args next-subs)))
-                                                 grnd-guards))
+                         #(satisfies-guards? root-store % grnd-guards)
                          (map #(assoc substs rest %) (unwrap store))))
          (set? store) (if (= (first next-terms) ::&)
                         (let [rest (second next-terms)]
                           (if (variable? term)
                             (filter
-                             #(every? (fn [[args gfn]] (apply gfn store (rewrite args %))) guards)
+                             #(satisfies-guards? root-store % guards)
                              (map #(assoc substs term % rest []) store))
                             (if (get store term) [(assoc substs rest [])] [])))
                         ())
          (variable? term) (let [[grnd-guards ungrnd-guards] (sort-guards guards (conj (keys substs) term))]
                             (mapcat (fn [[k v]]
                                       (let [next-substs (assoc substs term k)]
-                                        (if (every? (fn [[args gfn]]
-                                                      (apply gfn store (rewrite args next-substs)))
-                                                    grnd-guards)
-                                          (find-matches v
-                                                        next-substs
-                                                        ungrnd-guards
-                                                        next-terms)
+                                        (if (satisfies-guards? root-store next-substs grnd-guards)
+                                          (find-matches* root-store
+                                                         v
+                                                         next-substs
+                                                         ungrnd-guards
+                                                         next-terms)
                                           [])))
                                     store))
          (vector? term) (let [[grnd-guards ungrnd-guards] (sort-guards guards (concat (keys substs) term))]
                           (mapcat (fn [[k v]]
                                     (mapcat (fn [submatch]
-                                              (find-matches v (merge substs submatch) ungrnd-guards next-terms))
-                                            (find-matches k substs grnd-guards term)))
+                                              (find-matches* root-store v (merge substs submatch) ungrnd-guards next-terms))
+                                            (find-matches* root-store k substs grnd-guards term)))
                                   (filter (fn [[k v]] (map? k)) store)))
-         :else (find-matches (get store term) substs  guards next-terms))))))
+         :else (find-matches* root-store (get store term) substs  guards next-terms))))))
+
+(defn find-matches
+  ([store pattern] (find-matches* store store {} [] pattern))
+  ([store guards pattern] (find-matches* store store {} guards pattern))
+  ([store substs guards terms]
+     (find-matches* store store substs guards terms)))
 
 (defn partial-apply-guards
   "takes a collection of guards, and grounds their
@@ -157,11 +162,12 @@
 
 (defn fire-rule
   [fired-rule substs store]
+  (trace [:fire-rule] ["args:" substs "store" store ])
   (concat (map #(rewrite % substs) (:body fired-rule))
           (when-let [[args bfn] (:bodyfn fired-rule)]
             (apply bfn store (rewrite args substs)))))
 
-(def kill (atom 5))
+(def kill (atom 10000))
 
 (defn awake
   ([rules initial-constraints]
