@@ -1,14 +1,14 @@
 (ns chr.debug
   (:require [clojure.set :as set]))
 
-(def ^:dynamic *trace-set* #{:awake})
-(def ^:dynamic *trace-ignore* #{})
+(def trace-set (atom #{}))
+(def trace-ignore (atom #{}))
 (defn trace
   ([labels strs]
      (trace labels strs (last strs)))
   ([labels strs expr]
-     (when (and (not-empty (set/intersection (into #{:all} labels) *trace-set*))
-                (empty? (set/intersection (into #{} labels) *trace-ignore*)))
+     (when (and (not-empty (set/intersection (into #{:all} labels) @trace-set))
+                (empty? (set/intersection (into #{} labels) @trace-ignore)))
        (print (last labels))
        (print ", ")
        (doall (for [s strs] (print s "")))

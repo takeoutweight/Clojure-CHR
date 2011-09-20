@@ -155,6 +155,12 @@
                                                               (map second (:head rule))))))]
     [rule sibling-substs s0]))
 
+(defn fire-rule
+  [fired-rule substs store]
+  (concat (map #(rewrite % substs) (:body fired-rule))
+          (when-let [[args bfn] (:bodyfn fired-rule)]
+            (apply bfn store (rewrite args substs)))))
+
 (def kill (atom false))
 
 (defn awake
@@ -165,37 +171,36 @@
   ([store rules active-constraint queued-constraints prop-history next-rule-matches]
      (if (and active-constraint (not @kill))
        (let [t1 (System/nanoTime)
-             [[fired-rule substs next-store] & next-rule-matches]
-             , (or next-rule-matches
-                   (filter (fn [[rule substs _]] (not (prop-history [rule substs])))
-                           (matching-rule-seq store rules active-constraint)))]
+             [[fired-rule substs next-store new-constraints] & next-rule-matches]
+             , (filter
+                (fn [[fired-rule substs next-store new-constraints]]
+                  (not (prop-history [fired-rule substs new-constraints])))
+                (map (fn [[fired-rule substs next-store]]
+                       [fired-rule substs next-store (fire-rule fired-rule substs next-store)])
+                     (or next-rule-matches
+                         (matching-rule-seq store rules active-constraint))))]
          (if (and (empty? (bench :find-matches (find-matches store [] active-constraint))) fired-rule) 
            (let [_ (bench-here :awake-found t1)
-                 t2 (System/nanoTime)
-                 next-history (if (not-empty (filter (fn [[op _]] (= op :-)) (:head fired-rule)))
-                                prop-history
-                                (into prop-history [[fired-rule substs]]))
-                 _ (trace [:awake] [(map (fn [[op pat]] [op (rewrite pat substs)]) (:head fired-rule))])
-                 generated-rules (when-let [[args bfn] (:bodyfn fired-rule)]
-                                   (apply bfn next-store (rewrite args substs)))
-                 {kept-awake [:+ true],
-                  kept-asleep [:+ false]}
+                 t2 (System/nanoTime)                 
+                 _ (trace [:awake] [(map (fn [[op pat]] [op (rewrite pat substs)]) (:head fired-rule))])                 
+                 next-history (into prop-history [[fired-rule substs new-constraints]])
+                 {kept-awake-group [:+ true],
+                  kept-asleep-group [:+ false]}
                  ,  (group-by (fn [[op pat]] [op (= pat active-constraint)])
                               (map (fn [[op pat]] [op (rewrite pat substs)]) (:head fired-rule)))
-                 [next-active & next-queued] (concat
-                                              (concat (map #(rewrite % substs) (:body fired-rule))
-                                                      (map second kept-awake)
-                                                      generated-rules)
-                                              queued-constraints)]
+                 kept-awake (map second kept-awake-group)
+                 kept-asleep (map second kept-asleep-group)
+                 [next-active & next-queued] (concat new-constraints
+                                                     kept-awake
+                                                     queued-constraints)]
              (trace [:awake :firing] [(:name fired-rule) "on store:" (unwrap store) "with"
-                                      (concat (map #(rewrite % substs) (:body fired-rule))
-                                              generated-rules) "with subs:" substs])
+                                      new-constraints "with subs:" substs])
              (bench-here (:name fired-rule) t2)
              #_"If no constraints to be removed, maintain same store and position within the iterator."
              (if (empty? (filter (fn [[op _]] (= op :-)) (:head fired-rule)))
-               (recur (reduce impose-constraint store (map second kept-asleep))
+               (recur (reduce impose-constraint store kept-asleep)
                       rules next-active next-queued next-history next-rule-matches)
-               (recur (reduce impose-constraint next-store (map second kept-asleep))
+               (recur (reduce impose-constraint next-store kept-asleep)
                       rules next-active next-queued next-history nil)))
            (do
              (bench-here :awake-fail t1)
