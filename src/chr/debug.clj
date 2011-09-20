@@ -1,7 +1,7 @@
 (ns chr.debug
   (:require [clojure.set :as set]))
 
-(def ^:dynamic *trace-set* #{})
+(def ^:dynamic *trace-set* #{:awake})
 (def ^:dynamic *trace-ignore* #{})
 (defn trace
   ([labels strs]

@@ -176,6 +176,8 @@
                                 prop-history
                                 (into prop-history [[fired-rule substs]]))
                  _ (trace [:awake] [(map (fn [[op pat]] [op (rewrite pat substs)]) (:head fired-rule))])
+                 generated-rules (when-let [[args bfn] (:bodyfn fired-rule)]
+                                   (apply bfn next-store (rewrite args substs)))
                  {kept-awake [:+ true],
                   kept-asleep [:+ false]}
                  ,  (group-by (fn [[op pat]] [op (= pat active-constraint)])
@@ -183,13 +185,11 @@
                  [next-active & next-queued] (concat
                                               (concat (map #(rewrite % substs) (:body fired-rule))
                                                       (map second kept-awake)
-                                                      (when-let [[args bfn] (:bodyfn fired-rule)]
-                                                        (apply bfn next-store (rewrite args substs))))
+                                                      generated-rules)
                                               queued-constraints)]
              (trace [:awake :firing] [(:name fired-rule) "on store:" (unwrap store) "with"
                                       (concat (map #(rewrite % substs) (:body fired-rule))
-                                              (when-let [[args bfn] (:bodyfn fired-rule)]
-                                                (apply bfn next-store (rewrite args substs)))) "with subs:" substs])
+                                              generated-rules) "with subs:" substs])
              (bench-here (:name fired-rule) t2)
              #_"If no constraints to be removed, maintain same store and position within the iterator."
              (if (empty? (filter (fn [[op _]] (= op :-)) (:head fired-rule)))
@@ -236,7 +236,7 @@
                 {:name (quote ~name)
                  :head ~occurrences
                  :guards [~@(map (fn [g] `(chrfn [~store-alias ~@(collect-vars g)] ~g)) guards)]
-                 :bodyfn (chrfn [~store-alias ~@(collect-vars body)]~body)}))))
+                 :bodyfn (chrfn [~store-alias ~@(collect-vars body)] ~body)}))))
 
 ;---------------- Examples ---------------------
 
