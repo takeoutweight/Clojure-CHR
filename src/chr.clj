@@ -187,7 +187,7 @@
            (let [_ (bench-here :awake-found t1)
                  t2 (System/nanoTime)                 
                  _ (trace [:awake] [(map (fn [[op pat]] [op (rewrite pat substs)]) (:head fired-rule))])                 
-                 next-history (into prop-history [[fired-rule substs new-constraints]])
+                 next-history prop-history #_(into prop-history [[fired-rule substs new-constraints]])
                  {kept-awake-group [:+ true],
                   kept-asleep-group [:+ false]}
                  ,  (group-by (fn [[op pat]] [op (= pat active-constraint)])
