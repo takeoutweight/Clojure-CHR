@@ -116,7 +116,9 @@
   ([store pattern] (find-matches* store store {} [] pattern))
   ([store guards pattern] (find-matches* store store {} guards pattern))
   ([store substs guards terms]
-     (find-matches* store store substs guards terms)))
+     (find-matches* store store substs guards terms))
+  ([root-store store substs guards terms]
+     (find-matches* root-store store substs guards terms)))
 
 (defn partial-apply-guards
   "takes a collection of guards, and grounds their
@@ -127,13 +129,14 @@
 (defn match-head
   "list of all viable [subststitutions, store-after-removal]
    pairs that match this collection of patterns"
-  [store substs guards [pattern & rst]]
+  [root-store store substs guards [pattern & rst]]
   (if pattern
     (let [[grnd-guards ungrnd-guards] (bench :mh-sort-guards (sort-guards (partial-apply-guards guards substs) pattern))
           subbed-pat (bench :mh-rewrite (rewrite pattern substs)) 
-          next-substs (bench :mh-find-matches (find-matches store substs grnd-guards subbed-pat))]
+          next-substs (bench :mh-find-matches (find-matches root-store store substs grnd-guards subbed-pat))]
       (trace [:match-head] ["Matched on " pattern "with subs" next-substs "with guards"(map first grnd-guards) ])
-      (mapcat (fn [sb] (match-head (bench :mh-dissoc (dissoc-constraint store (rewrite pattern sb)))
+      (mapcat (fn [sb] (match-head root-store
+                                   (bench :mh-dissoc (dissoc-constraint store (rewrite pattern sb)))
                                    sb ungrnd-guards rst))
               next-substs))
     [[substs store]]))
@@ -147,13 +150,14 @@
         :let [[grnd-guards ungrnd-guards] (bench :sort-guards
                                                  (sort-guards (:guards rule) pattern))]
         next-substs (bench :find-matches
-                           (find-matches (impose-constraint {} active-constraint) grnd-guards pattern))
+                           (find-matches store (impose-constraint {} active-constraint) {} grnd-guards pattern))
         [sibling-substs s0] (trace [:awake :search]
                                    ["subs" next-substs
                                     "on pattern:" pattern
                                     "with grnd-guards" grnd-guards]
                                    (bench :match-head
                                           (match-head store
+                                                      store
                                                       next-substs
                                                       ungrnd-guards
                                                       (filter #(not= pattern %)
@@ -166,6 +170,14 @@
   (concat (map #(rewrite % substs) (:body fired-rule))
           (when-let [[args bfn] (:bodyfn fired-rule)]
             (apply bfn store (rewrite args substs)))))
+
+(defn group-pairs
+  "like group-by, except groups by first elt as the keys,
+   and a seq of second elts as values."
+  [seq-of-pairs]
+  (into {}
+         (map (fn [[k v]] [k (map second v)])
+              (group-by first seq-of-pairs))))
 
 (def kill (atom 10000))
 
@@ -180,9 +192,10 @@
              [[fired-rule substs next-store new-constraints] & next-rule-matches]
              , (filter
                 (fn [[fired-rule substs next-store new-constraints]]
-                  (let [matched (into #{} (map (fn [[_op pat]] (rewrite pat substs)) (:head fired-rule)))
-                        new (into #{} new-constraints)]
-                    (not= matched new))
+                  (let [{kept :+ removed :-} (group-pairs (map (fn [[op pat]] [op (rewrite pat substs)])
+                                                               (:head fired-rule)))]
+                    (not= (into #{} (concat kept removed))
+                          (into #{} (concat kept new-constraints))))
                   #_(not (prop-history [fired-rule substs new-constraints])))
                 (map (fn [[fired-rule substs next-store]]
                        [fired-rule substs next-store (fire-rule fired-rule substs next-store)])
@@ -194,12 +207,12 @@
                  t2 (System/nanoTime)                 
                  _ (trace [:awake] [(map (fn [[op pat]] [op (rewrite pat substs)]) (:head fired-rule))])                 
                  next-history prop-history #_(into prop-history [[fired-rule substs new-constraints]])
-                 {kept-awake-group [:+ true],
-                  kept-asleep-group [:+ false]}
-                 ,  (group-by (fn [[op pat]] [op (= pat active-constraint)])
-                              (map (fn [[op pat]] [op (rewrite pat substs)]) (:head fired-rule)))
-                 kept-awake (map second kept-awake-group)
-                 kept-asleep (map second kept-asleep-group)
+                 {kept-awake [:+ true],
+                  kept-asleep [:+ false]}
+                 ,  (group-pairs (map (fn [[op pat]]
+                                        (let [t (rewrite pat substs)]
+                                          [[op (= t active-constraint)] t]))
+                                      (:head fired-rule)))
                  [next-active & next-queued] (concat new-constraints
                                                      kept-awake
                                                      queued-constraints)]
