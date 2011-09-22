@@ -120,6 +120,24 @@
   ([root-store store substs guards terms]
      (find-matches* root-store store substs guards terms)))
 
+(defn store-values
+  "flat list of every value in a store (not grouped by constraints)"
+  [store]
+  (if (map? store)
+    (concat (keys store) (mapcat store-values (vals store)))
+    store))
+
+(defn store?
+  [t] (map? t))
+
+(defn find-matches-recursive
+  "descends into nested stores to find matches."
+  ([store pattern] (find-matches-recursive store [] pattern))
+  ([store guards pattern]
+     (concat (find-matches store guards pattern)
+             (mapcat #(find-matches-recursive % guards pattern)
+                     (filter store? (store-values store))))))
+
 (defn partial-apply-guards
   "takes a collection of guards, and grounds their
    argument templates according to the substitution."
