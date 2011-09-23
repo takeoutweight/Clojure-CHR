@@ -73,6 +73,16 @@
       :find-matches
       (let [term (get substs term term)]
         (cond
+         (vector? term) (do (println "calling vec: on" term "with store: " store)
+                            (let [[grnd-guards ungrnd-guards] (sort-guards guards (concat (keys substs) term))]
+                              (mapcat (fn [[k v]]
+                                        (if v (mapcat (fn [submatch]
+                                                        (find-matches* root-store v (merge substs submatch) ungrnd-guards next-terms))
+                                                      (find-matches* root-store k substs grnd-guards term))
+                                            (find-matches* root-store k substs grnd-guards term)))
+                                      (if (map? store)
+                                        (filter (fn [[k v]] (map? k)) store)
+                                        (map (fn [s] [s nil]) (filter map? store))))))
          (nil? next-terms) (if (set? store)
                              (if (variable? term)
                                (filter
@@ -84,7 +94,7 @@
                             [grnd-guards _] (sort-guards guards (conj (keys substs) rest))]
                         (filter
                          #(satisfies-guards? root-store % grnd-guards)
-                         (map #(assoc substs rest %) (unwrap store))))
+                         (map #(assoc substs rest %) (unwrap store))))         
          (set? store) (if (= (first next-terms) ::&)
                         (let [rest (second next-terms)]
                           (if (variable? term)
@@ -106,12 +116,6 @@
                                             [])))
                                       store))
                             [])
-         (vector? term) (let [[grnd-guards ungrnd-guards] (sort-guards guards (concat (keys substs) term))]
-                          (mapcat (fn [[k v]]
-                                    (mapcat (fn [submatch]
-                                              (find-matches* root-store v (merge substs submatch) ungrnd-guards next-terms))
-                                            (find-matches* root-store k substs grnd-guards term)))
-                                  (filter (fn [[k v]] (map? k)) store)))
          :else (find-matches* root-store (get store term) substs  guards next-terms))))))
 
 (defn find-matches
@@ -280,7 +284,9 @@
            store-alias (or (last (map second (filter (fn [[op pat]] (= :store op)) (partition 2 head))))
                            'store)
            variables (into #{} (for [pattern (map second occurrences)
-                                     term pattern
+                                     term (walk/postwalk (fn [f] (cond (symbol? f) #{f}
+                                                                       (coll? f) (apply set/union f)
+                                                                       :else nil)) pattern)
                                      :when (symbol? term)] term))
            collect-vars (fn [form] (walk/postwalk (fn [f] (cond (variables f) #{f}
                                                                 (coll? f) (apply set/union f)
