@@ -93,17 +93,19 @@
                              (map #(assoc substs term % rest []) store))
                             (if (get store term) [(assoc substs rest [])] [])))
                         ())
-         (variable? term) (let [[grnd-guards ungrnd-guards] (sort-guards guards (conj (keys substs) term))]
-                            (mapcat (fn [[k v]]
-                                      (let [next-substs (assoc substs term k)]
-                                        (if (satisfies-guards? root-store next-substs grnd-guards)
-                                          (find-matches* root-store
-                                                         v
-                                                         next-substs
-                                                         ungrnd-guards
-                                                         next-terms)
-                                          [])))
-                                    store))
+         (variable? term) (if (map? store)
+                            (let [[grnd-guards ungrnd-guards] (sort-guards guards (conj (keys substs) term))]
+                              (mapcat (fn [[k v]]
+                                        (let [next-substs (assoc substs term k)]
+                                          (if (satisfies-guards? root-store next-substs grnd-guards)
+                                            (find-matches* root-store
+                                                           v
+                                                           next-substs
+                                                           ungrnd-guards
+                                                           next-terms)
+                                            [])))
+                                      store))
+                            [])
          (vector? term) (let [[grnd-guards ungrnd-guards] (sort-guards guards (concat (keys substs) term))]
                           (mapcat (fn [[k v]]
                                     (mapcat (fn [submatch]
@@ -245,6 +247,7 @@
                       rules next-active next-queued next-history nil)))
            (do
              (bench-here :awake-fail t1)
+             (trace [:awake :awake-fail] ["store" store "active c:" active-constraint "::" queued-constraints])
              (recur (impose-constraint store active-constraint)
                     rules
                     (first queued-constraints)
@@ -255,10 +258,14 @@
 
 (defmacro chrfn
   "chrfns must be of the form
-   (chrfn [store arg1 ...argn]) where store is
+   (chrfn name? [store arg1 ...argn]) where store is bound to
    the current state of the constraint store"
-  [args & body]
-  `[~(vec (drop 1 args)) (fn ~args ~@body)])
+  {:forms '[(chrfn name? [store params*] exprs*)]}
+  [args-or-name & rst]
+  (if (vector? args-or-name)
+    `[~(vec (drop 1 args-or-name)) (fn ~args-or-name ~@rst)]
+    (let [[args & body] rst]
+      `[~(vec (drop 1 args)) (fn ~args-or-name ~args ~@body)])))
 
 (defmacro rule
   ([head body] 
@@ -281,8 +288,8 @@
        `(exists ~(vec variables)
                 {:name (quote ~name)
                  :head ~occurrences
-                 :guards [~@(map (fn [g] `(chrfn [~store-alias ~@(collect-vars g)] ~g)) guards)]
-                 :bodyfn (chrfn [~store-alias ~@(collect-vars body)] ~body)}))))
+                 :guards [~@(map (fn [g] `(chrfn ~name [~store-alias ~@(collect-vars g)] ~g)) guards)]
+                 :bodyfn (chrfn ~name [~store-alias ~@(collect-vars body)] ~body)}))))
 
 ;---------------- Examples ---------------------
 
