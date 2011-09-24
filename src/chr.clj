@@ -46,12 +46,30 @@
   [guards grounded-variables]
   (no-bench
    :sort-guards
-   (let [ground-set (into #{} grounded-variables)
+   (let [ground-set (set grounded-variables)
          {ground true unground false}
          , (group-by (fn [[args gfn]] (every? #(or (not (variable? %))
                                                    (ground-set %)) args))
                      guards)]
      [ground unground])))
+
+(defn sort-let-binders
+  "given a collection of variables that will be grounded, sorts into
+   [grounded-lbs, ungrounded-lbs, newly-grounded-lvars], reflecting the additional lvars
+   that will be ground by running these binders"
+  [let-binders grounded-variables]
+  (let [ground-set (set
+                    grounded-variables)
+        {ground true unground false}
+        , (group-by (fn [[args news gfn]] (every? #(or (not (variable? %))
+                                                       (ground-set %)) args))
+                    let-binders)
+        newly-ground (apply set/union (map (comp set second) ground))]
+    (if (empty? (set/difference newly-ground ground-set))
+      (do (trace [:sort-let-binders] [[ground unground ground-set]])
+          [ground unground ground-set])
+      (let [[g ug ngs] (sort-let-binders unground (set/union ground-set newly-ground))]
+        [(concat ground g) ug ngs]))))
 
 (defn unwrap
   "Returns the sequence of constraints comprised by a given store.
@@ -69,7 +87,9 @@
 (defn let-bind
   "returns the substs map modified by the let-binder"
   [root-store substs let-binders]
-  (apply merge substs (map (fn [[args bfn]] (apply bfn root-store (rewrite args substs))) let-binders)))
+  (reduce (fn [s [args _ bfn]] (merge s (apply bfn root-store (rewrite args s))))
+          substs
+          let-binders))
 
 (defn find-matches*
   "Returns a seq of substitution maps, arity of pattern must be matched."  
@@ -79,8 +99,8 @@
       (let [term (get substs term term)]
         (cond
          (vector? term) (do (println "calling vec: on" term "with store: " store)
-                            (let [[grnd-guards ungrnd-guards] (sort-guards guards (concat (keys substs) term))
-                                  [grnd-binders ungrnd-binders] (sort-guards let-binders (concat (keys substs) term))]
+                            (let [[grnd-binders ungrnd-binders next-ground] (sort-let-binders let-binders (concat (keys substs) term))
+                                  [grnd-guards ungrnd-guards] (sort-guards guards next-ground)]
                               (mapcat (fn [[k v]]
                                         (if v (mapcat (fn [submatch]
                                                         (find-matches* root-store v (merge substs submatch) ungrnd-guards ungrnd-binders next-terms))
@@ -96,9 +116,9 @@
                                 (map #(let-bind root-store (assoc substs term %) let-binders) store))
                                (if (get store term) [substs] []))
                              [])
-         (= ::& term) (let [rest (first next-terms) 
-                            [grnd-guards _] (sort-guards guards (conj (keys substs) rest))
-                            [grnd-binders _] (sort-guards let-binders (conj (keys substs) rest))]
+         (= ::& term) (let [rest (first next-terms)
+                            [grnd-binders _ next-ground] (sort-let-binders let-binders (conj (keys substs) rest))                            
+                            [grnd-guards _] (sort-guards guards next-ground)]
                         (filter
                          #(satisfies-guards? root-store % grnd-guards)
                          (map #(let-bind root-store (assoc substs rest %) grnd-binders) (unwrap store))))         
@@ -111,8 +131,8 @@
                             (if (get store term) [(let-bind root-store (assoc substs rest []) let-binders)] [])))
                         ())
          (variable? term) (if (map? store)
-                            (let [[grnd-guards ungrnd-guards] (sort-guards guards (conj (keys substs) term))
-                                  [grnd-binders ungrnd-binders] (sort-guards let-binders (conj (keys substs) term))]
+                            (let [[grnd-binders ungrnd-binders next-ground] (sort-let-binders let-binders (conj (keys substs) term))
+                                  [grnd-guards ungrnd-guards] (sort-guards guards next-ground)]
                               (mapcat (fn [[k v]]
                                         (let [next-substs (assoc substs term k)]
                                           (if (satisfies-guards? root-store next-substs grnd-guards)
@@ -153,19 +173,20 @@
              (mapcat #(find-matches-recursive % guards pattern)
                      (filter store? (store-values store))))))
 
-(defn partial-apply-guards
-  "takes a collection of guards, and grounds their
+(defn partial-apply-chrfns
+  "takes a collection of guards or let-binders, and grounds their
    argument templates according to the substitution."
   [guards substs]
-  (map (fn [[args gfn]] [(rewrite args substs) gfn]) guards))
+  (trace [:partial-apply] [guards "with" substs])
+  (map (fn [[args & rst]] (vec (concat [(rewrite args substs)] rst))) guards))
 
 (defn match-head
   "list of all viable [subststitutions, store-after-removal]
    pairs that match this collection of patterns"
   [root-store store substs guards let-binders [pattern & rst]]
   (if pattern
-    (let [[grnd-guards ungrnd-guards] (sort-guards (partial-apply-guards guards substs) pattern)
-          [grnd-binders ungrnd-binders] (sort-guards (partial-apply-guards let-binders substs) pattern)
+    (let [[grnd-binders ungrnd-binders next-ground] (trace [:mh-letbinders] ["store" store "root-store" root-store "pattern" pattern "->" (sort-let-binders (partial-apply-chrfns let-binders substs) pattern)])
+          [grnd-guards ungrnd-guards] (sort-guards (partial-apply-chrfns guards substs) next-ground)
           subbed-pat (bench :mh-rewrite (rewrite pattern substs)) 
           next-substs (bench :mh-find-matches (find-matches root-store store substs grnd-guards grnd-binders subbed-pat))]
       (trace [:match-head] ["Matched on " pattern "with subs" next-substs "with guards"(map first grnd-guards) ])
@@ -181,10 +202,12 @@
   [store rules active-constraint]
   (for [rule rules
         [_op pattern] (:head rule)
-        :let [[grnd-guards ungrnd-guards] (bench :sort-guards
-                                                 (sort-guards (:guards rule) pattern))
-              [grnd-binders ungrnd-binders] (bench :sort-guards
-                                                   (sort-guards (:let-binders rule) pattern))]
+        :let [[grnd-binders ungrnd-binders newly-ground] (bench :sort-guards
+                                                                (do
+                                                                  (trace [:matching-rule-seq] ["initial binders with" pattern "on store" store "with AC" active-constraint])
+                                                                  (sort-let-binders (:let-binders rule) pattern)))
+              [grnd-guards ungrnd-guards] (bench :sort-guards
+                                                 (sort-guards (:guards rule) newly-ground))]
         next-substs (bench :find-matches
                            (find-matches store (impose-constraint {} active-constraint) {} grnd-guards grnd-binders pattern))
         [sibling-substs s0] (trace [:awake :search]
@@ -276,7 +299,8 @@
 (defmacro chrfn
   "chrfns must be of the form
    (chrfn name? [store arg1 ...argn]) where store is bound to
-   the current state of the constraint store"
+   the current state of the constraint store.
+   becomes [required-lvars, (fn [store required] ...)] tuple"
   {:forms '[(chrfn name? [store params*] exprs*)]}
   [args-or-name & rst]
   (if (vector? args-or-name)
@@ -285,13 +309,16 @@
       `[~(vec (drop 1 args)) (fn ~args-or-name ~args ~@body)])))
 
 (defn let-binder*
-  "convert a normal let binding into a function that returns a binding map."
+  "convert a normal let binding into a tuple holding afunction that returns a binding map.
+   a let binder is a [required-lvars, provided-lvars, (fn [store required] ...)] tuple"
   [name argform new-vars bindform expr]
   (let [new-var-aliases (map #(gensym (str % "-")) new-vars)]
-    `(chrfn ~name ~argform
-            (let [~@(mapcat (fn [alias v] [alias `(variable ~v)]) new-var-aliases new-vars)
-                  ~bindform ~expr]
-              (hash-map ~@(interleave new-var-aliases new-vars))))))
+    `[~(vec (drop 1 argform))
+      ~(vec new-vars)
+      (fn ~name ~argform
+        (let [~@(mapcat (fn [alias v] [alias `(variable ~v)]) new-var-aliases new-vars)
+              ~bindform ~expr]
+          (hash-map ~@(interleave new-var-aliases new-vars))))]))
 
 (defmacro rule
   ([head body] 
