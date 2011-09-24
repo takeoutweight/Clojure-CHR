@@ -38,7 +38,11 @@
   [store constraint]
   (no-bench
    :impose-constraint
-   (update-in store (drop-last constraint) set/union #{(last constraint)})))
+   (if (= 1 (count constraint))
+     (if (= {} store)
+       #{(first constraint)}
+       (into store constraint))
+     (update-in store (drop-last constraint) set/union #{(last constraint)}))))
 
 (defn sort-guards
   "given a collection of variables that will be grounded, sorts into
