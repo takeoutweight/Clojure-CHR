@@ -66,20 +66,26 @@
   [root-store substs guards]
   (every? (fn [[args gfn]] (trace [:guard-call] ["store:" root-store] (apply gfn root-store (rewrite args substs)))) guards))
 
+(defn let-bind
+  "returns the substs map modified by the let-binder"
+  [root-store substs let-binders]
+  (apply merge substs (map (fn [[args bfn]] (apply bfn root-store (rewrite args substs))) let-binders)))
+
 (defn find-matches*
   "Returns a seq of substitution maps, arity of pattern must be matched."  
-  ([root-store store substs guards [term & next-terms]]     
+  ([root-store store substs guards let-binders [term & next-terms]]     
      (no-bench
       :find-matches
       (let [term (get substs term term)]
         (cond
          (vector? term) (do (println "calling vec: on" term "with store: " store)
-                            (let [[grnd-guards ungrnd-guards] (sort-guards guards (concat (keys substs) term))]
+                            (let [[grnd-guards ungrnd-guards] (sort-guards guards (concat (keys substs) term))
+                                  [grnd-binders ungrnd-binders] (sort-guards let-binders (concat (keys substs) term))]
                               (mapcat (fn [[k v]]
                                         (if v (mapcat (fn [submatch]
-                                                        (find-matches* root-store v (merge substs submatch) ungrnd-guards next-terms))
-                                                      (find-matches* root-store k substs grnd-guards term))
-                                            (find-matches* root-store k substs grnd-guards term)))
+                                                        (find-matches* root-store v (merge substs submatch) ungrnd-guards ungrnd-binders next-terms))
+                                                      (find-matches* root-store k substs grnd-guards grnd-binders term))
+                                            (find-matches* root-store k substs grnd-guards grnd-binders term)))
                                       (if (map? store)
                                         (filter (fn [[k v]] (map? k)) store)
                                         (map (fn [s] [s nil]) (filter map? store))))))
@@ -87,44 +93,47 @@
                              (if (variable? term)
                                (filter
                                 #(satisfies-guards? root-store % guards)
-                                (map #(assoc substs term %) store))
+                                (map #(let-bind root-store (assoc substs term %) let-binders) store))
                                (if (get store term) [substs] []))
                              [])
          (= ::& term) (let [rest (first next-terms) 
-                            [grnd-guards _] (sort-guards guards (conj (keys substs) rest))]
+                            [grnd-guards _] (sort-guards guards (conj (keys substs) rest))
+                            [grnd-binders _] (sort-guards let-binders (conj (keys substs) rest))]
                         (filter
                          #(satisfies-guards? root-store % grnd-guards)
-                         (map #(assoc substs rest %) (unwrap store))))         
+                         (map #(let-bind root-store (assoc substs rest %) grnd-binders) (unwrap store))))         
          (set? store) (if (= (first next-terms) ::&)
                         (let [rest (second next-terms)]
                           (if (variable? term)
                             (filter
                              #(satisfies-guards? root-store % guards)
-                             (map #(assoc substs term % rest []) store))
-                            (if (get store term) [(assoc substs rest [])] [])))
+                             (map #(let-bind root-store (assoc substs term % rest []) let-binders) store))
+                            (if (get store term) [(let-bind root-store (assoc substs rest []) let-binders)] [])))
                         ())
          (variable? term) (if (map? store)
-                            (let [[grnd-guards ungrnd-guards] (sort-guards guards (conj (keys substs) term))]
+                            (let [[grnd-guards ungrnd-guards] (sort-guards guards (conj (keys substs) term))
+                                  [grnd-binders ungrnd-binders] (sort-guards let-binders (conj (keys substs) term))]
                               (mapcat (fn [[k v]]
                                         (let [next-substs (assoc substs term k)]
                                           (if (satisfies-guards? root-store next-substs grnd-guards)
                                             (find-matches* root-store
                                                            v
-                                                           next-substs
+                                                           (let-bind root-store next-substs grnd-binders)
                                                            ungrnd-guards
+                                                           ungrnd-binders
                                                            next-terms)
                                             [])))
                                       store))
                             [])
-         :else (find-matches* root-store (get store term) substs  guards next-terms))))))
+         :else (find-matches* root-store (get store term) substs guards let-binders next-terms))))))
 
 (defn find-matches
-  ([store pattern] (find-matches* store store {} [] pattern))
-  ([store guards pattern] (find-matches* store store {} guards pattern))
+  ([store pattern] (find-matches* store store {} [] [] pattern))
+  ([store guards pattern] (find-matches* store store {} guards [] pattern))
   ([store substs guards terms]
-     (find-matches* store store substs guards terms))
-  ([root-store store substs guards terms]
-     (find-matches* root-store store substs guards terms)))
+     (find-matches* store store substs guards [] terms))
+  ([root-store store substs guards let-binders terms]
+     (find-matches* root-store store substs guards let-binders terms)))
 
 (defn store-values
   "flat list of every value in a store (not grouped by constraints)"
@@ -153,15 +162,16 @@
 (defn match-head
   "list of all viable [subststitutions, store-after-removal]
    pairs that match this collection of patterns"
-  [root-store store substs guards [pattern & rst]]
+  [root-store store substs guards let-binders [pattern & rst]]
   (if pattern
-    (let [[grnd-guards ungrnd-guards] (bench :mh-sort-guards (sort-guards (partial-apply-guards guards substs) pattern))
+    (let [[grnd-guards ungrnd-guards] (sort-guards (partial-apply-guards guards substs) pattern)
+          [grnd-binders ungrnd-binders] (sort-guards (partial-apply-guards let-binders substs) pattern)
           subbed-pat (bench :mh-rewrite (rewrite pattern substs)) 
-          next-substs (bench :mh-find-matches (find-matches root-store store substs grnd-guards subbed-pat))]
+          next-substs (bench :mh-find-matches (find-matches root-store store substs grnd-guards grnd-binders subbed-pat))]
       (trace [:match-head] ["Matched on " pattern "with subs" next-substs "with guards"(map first grnd-guards) ])
       (mapcat (fn [sb] (match-head root-store
                                    (bench :mh-dissoc (dissoc-constraint store (rewrite pattern sb)))
-                                   sb ungrnd-guards rst))
+                                   sb ungrnd-guards ungrnd-binders rst))
               next-substs))
     [[substs store]]))
 
@@ -172,9 +182,11 @@
   (for [rule rules
         [_op pattern] (:head rule)
         :let [[grnd-guards ungrnd-guards] (bench :sort-guards
-                                                 (sort-guards (:guards rule) pattern))]
+                                                 (sort-guards (:guards rule) pattern))
+              [grnd-binders ungrnd-binders] (bench :sort-guards
+                                                   (sort-guards (:let-binders rule) pattern))]
         next-substs (bench :find-matches
-                           (find-matches store (impose-constraint {} active-constraint) {} grnd-guards pattern))
+                           (find-matches store (impose-constraint {} active-constraint) {} grnd-guards grnd-binders pattern))
         [sibling-substs s0] (trace [:awake :search]
                                    ["subs" next-substs
                                     "on pattern:" pattern
@@ -184,6 +196,7 @@
                                                       store
                                                       next-substs
                                                       ungrnd-guards
+                                                      ungrnd-binders
                                                       (filter #(not= pattern %)
                                                               (map second (:head rule))))))]
     [rule sibling-substs s0]))
@@ -271,6 +284,15 @@
     (let [[args & body] rst]
       `[~(vec (drop 1 args)) (fn ~args-or-name ~args ~@body)])))
 
+(defn let-binder*
+  "convert a normal let binding into a function that returns a binding map."
+  [name argform new-vars bindform expr]
+  (let [new-var-aliases (map #(gensym (str % "-")) new-vars)]
+    `(chrfn ~name ~argform
+            (let [~@(mapcat (fn [alias v] [alias `(variable ~v)]) new-var-aliases new-vars)
+                  ~bindform ~expr]
+              (hash-map ~@(interleave new-var-aliases new-vars))))))
+
 (defmacro rule
   ([head body] 
      `(rule ~(symbol (str "rule-" (mod (hash [head body]) 10000))) ~head ~body))
@@ -281,21 +303,33 @@
                                                      pat)])
                                  (filter (fn [[op pat]] (#{:- :+} op)) (partition 2 head))))
            guards (vec (map second (filter (fn [[op pat]] (= :when  op)) (partition 2 head))))
+           let-bindings (vec (mapcat #(partition 2 (second %))
+                                     (filter (fn [[op pat]] (= :let  op))
+                                             (partition 2 head))))
            store-alias (or (last (map second (filter (fn [[op pat]] (= :store op)) (partition 2 head))))
                            'store)
-           variables (into #{} (for [pattern (map second occurrences)
-                                     term (walk/postwalk (fn [f] (cond (symbol? f) #{f}
-                                                                       (coll? f) (apply set/union f)
-                                                                       :else nil)) pattern)
+           variables (into #{} (for [pattern (concat (map second occurrences)
+                                                     (map first let-bindings))
+                                     term ((fn gather [f] (cond (symbol? f) #{f}
+                                                                (coll? f) (apply set/union (map gather f))
+                                                                :else nil)) pattern)
                                      :when (symbol? term)] term))
-           collect-vars (fn [form] (walk/postwalk (fn [f] (cond (variables f) #{f}
-                                                                (coll? f) (apply set/union f)
-                                                                :else nil)) form))]
+           collect-vars (fn [form]
+                          ((fn gather [f] (cond (variables f) #{f}
+                                                (coll? f) (apply set/union (map gather f))
+                                                :else nil)) form))]
        `(exists ~(vec variables)
                 {:name (quote ~name)
                  :head ~occurrences
                  :guards [~@(map (fn [g] `(chrfn ~name [~store-alias ~@(collect-vars g)] ~g)) guards)]
-                 :bodyfn (chrfn ~name [~store-alias ~@(collect-vars body)] ~body)}))))
+                 :let-binders [~@(map (fn [[bindform expr]]
+                                        (let-binder* name
+                                                     (vec (concat [store-alias] (collect-vars expr)))
+                                                     (collect-vars bindform)
+                                                     bindform expr))
+                                      let-bindings)]
+                 :bodyfn (chrfn ~name [~store-alias ~@(collect-vars body)] ~body)
+                 }))))
 
 ;---------------- Examples ---------------------
 
