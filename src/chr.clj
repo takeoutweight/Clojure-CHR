@@ -312,8 +312,7 @@
                                                      (map first let-bindings))
                                      term ((fn gather [f] (cond (symbol? f) #{f}
                                                                 (coll? f) (apply set/union (map gather f))
-                                                                :else nil)) pattern)
-                                     :when (symbol? term)] term))
+                                                                :else nil)) pattern)] term))
            collect-vars (fn [form]
                           ((fn gather [f] (cond (variables f) #{f}
                                                 (coll? f) (apply set/union (map gather f))
