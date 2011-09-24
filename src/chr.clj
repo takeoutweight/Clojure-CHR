@@ -243,16 +243,21 @@
          (map (fn [[k v]] [k (map second v)])
               (group-by first seq-of-pairs))))
 
-(def kill (atom 10000))
+(def rule-propagation-limit (atom 10000))
+(def propagations (atom 0))
 
 (defn awake
   ([rules initial-constraints]
-     (awake {} rules (first initial-constraints) (rest initial-constraints) #{} nil))
+     (do (swap! propagations (fn [_] 0))
+         (awake {} rules (first initial-constraints) (rest initial-constraints) #{} nil)))
   ([rules store initial-constraints]
-     (awake store rules (first initial-constraints) (rest initial-constraints) #{} nil))
+     (do (swap! propagations (fn [_] 0))
+         (awake store rules (first initial-constraints) (rest initial-constraints) #{} nil)))
   ([store rules active-constraint queued-constraints prop-history continued-rule-matches]
-     (if (and active-constraint (>= (swap! kill dec) 0))
-       (let [t1 (System/nanoTime)
+     (if active-constraint
+       (let [_ (when (> (swap! propagations inc) @rule-propagation-limit)
+                 (throw (Exception. "Rule propagation overflow.")))
+             t1 (System/nanoTime)
              [[fired-rule substs next-store new-constraints] & next-rule-matches]
              , (filter
                 (fn [[fired-rule substs next-store new-constraints]]
