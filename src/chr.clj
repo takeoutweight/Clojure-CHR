@@ -36,13 +36,14 @@
 
 (defn impose-constraint
   [store constraint]
-  (no-bench
-   :impose-constraint
-   (if (= 1 (count constraint))
-     (if (= {} store)
-       #{(first constraint)}
-       (into store constraint))
-     (update-in store (drop-last constraint) set/union #{(last constraint)}))))
+  (do
+    (trace [:impose-constraint]
+           ["on store" store "with constraint" constraint])
+    (if (= 1 (count constraint))
+      (if (= {} store)
+        #{(first constraint)}
+        (into store constraint))
+      (update-in store (drop-last constraint) set/union #{(last constraint)}))))
 
 (defn sort-guards
   "given a collection of variables that will be grounded, sorts into
@@ -102,17 +103,16 @@
       :find-matches
       (let [term (get substs term term)]
         (cond
-         (vector? term) (do (println "calling vec: on" term "with store: " store)
-                            (let [[grnd-binders ungrnd-binders next-ground] (sort-let-binders let-binders (concat (keys substs) term))
-                                  [grnd-guards ungrnd-guards] (sort-guards guards next-ground)]
-                              (mapcat (fn [[k v]]
-                                        (if v (mapcat (fn [submatch]
-                                                        (find-matches* root-store v (merge substs submatch) ungrnd-guards ungrnd-binders next-terms))
-                                                      (find-matches* root-store k substs grnd-guards grnd-binders term))
-                                            (find-matches* root-store k substs grnd-guards grnd-binders term)))
-                                      (if (map? store)
-                                        (filter (fn [[k v]] (map? k)) store)
-                                        (map (fn [s] [s nil]) (filter map? store))))))
+         (vector? term) (let [[grnd-binders ungrnd-binders next-ground] (sort-let-binders let-binders (concat (keys substs) term))
+                              [grnd-guards ungrnd-guards] (sort-guards guards next-ground)]
+                          (mapcat (fn [[k v]]
+                                    (if v (mapcat (fn [submatch]
+                                                    (find-matches* root-store v (merge substs submatch) ungrnd-guards ungrnd-binders next-terms))
+                                                  (find-matches* root-store k substs grnd-guards grnd-binders term))
+                                        (find-matches* root-store k substs grnd-guards grnd-binders term)))
+                                  (if (map? store)
+                                    (filter (fn [[k v]] (map? k)) store)
+                                    (map (fn [s] [s nil]) (filter map? store)))))
          (nil? next-terms) (if (set? store)
                              (if (variable? term)
                                (filter
@@ -189,11 +189,15 @@
    pairs that match this collection of patterns"
   [root-store store substs guards let-binders [pattern & rst]]
   (if pattern
-    (let [[grnd-binders ungrnd-binders next-ground] (trace [:mh-letbinders] ["store" store "root-store" root-store "pattern" pattern "->" (sort-let-binders (partial-apply-chrfns let-binders substs) pattern)])
+    (let [[grnd-binders ungrnd-binders next-ground]
+          , (trace [:mh-letbinders] ["store" store "root-store" root-store "pattern" pattern "->"
+                                     (sort-let-binders (partial-apply-chrfns let-binders substs) (concat (flatten pattern) (keys substs)))])
           [grnd-guards ungrnd-guards] (sort-guards (partial-apply-chrfns guards substs) next-ground)
           subbed-pat (bench :mh-rewrite (rewrite pattern substs)) 
           next-substs (bench :mh-find-matches (find-matches root-store store substs grnd-guards grnd-binders subbed-pat))]
       (trace [:match-head] ["Matched on " pattern "with subs" next-substs "with guards"(map first grnd-guards) ])
+      (when (and (empty? rst)  (not (empty? ungrnd-guards)))
+        (trace [:match-head :error] ["Some guards will not be fired:" (map first guards) "with substs:" next-substs "choice informed by " next-ground]))
       (mapcat (fn [sb] (match-head root-store
                                    (bench :mh-dissoc (dissoc-constraint store (rewrite pattern sb)))
                                    sb ungrnd-guards ungrnd-binders rst))
@@ -206,12 +210,14 @@
   [store rules active-constraint]
   (for [rule rules
         [_op pattern] (:head rule)
-        :let [[grnd-binders ungrnd-binders newly-ground] (bench :sort-guards
-                                                                (do
-                                                                  (trace [:matching-rule-seq] ["initial binders with" pattern "on store" store "with AC" active-constraint])
-                                                                  (sort-let-binders (:let-binders rule) pattern)))
+        :let [[grnd-binders ungrnd-binders newly-ground]
+              , (bench :sort-guards
+                       (do
+                         (trace [:matching-rule-seq] ["initial binders with" pattern "on store" store "with AC" active-constraint])
+                         (sort-let-binders (:let-binders rule) pattern)))
               [grnd-guards ungrnd-guards] (bench :sort-guards
-                                                 (sort-guards (:guards rule) newly-ground))]
+                                                 (sort-guards (:guards rule) newly-ground))
+              _ (trace [:matching-rule-seq] ["Unground guards" (map first ungrnd-guards)])]
         next-substs (bench :find-matches
                            (find-matches store (impose-constraint {} active-constraint) {} grnd-guards grnd-binders pattern))
         [sibling-substs s0] (trace [:awake :search]
@@ -230,7 +236,7 @@
 
 (defn fire-rule
   [fired-rule substs store]
-  (trace [:fire-rule] ["args:" substs "store" store ])
+  (trace [:fire-rule] [(:name fired-rule) "args:" substs "store" store ])
   (concat (map #(rewrite % substs) (:body fired-rule))
           (when-let [[args bfn] (:bodyfn fired-rule)]
             (apply bfn store (rewrite args substs)))))
@@ -330,8 +336,12 @@
           (hash-map ~@(interleave new-var-aliases new-vars))))]))
 
 (defmacro rule
+  ([head]
+     `(rule ~(symbol (str "rule-" (mod (hash head) 10000))) ~head))
   ([head body] 
-     `(rule ~(symbol (str "rule-" (mod (hash [head body]) 10000))) ~head ~body))
+     (if (vector? head)
+       `(rule ~(symbol (str "rule-" (mod (hash [head body]) 10000))) ~head ~body)
+       `(rule ~head ~body [])))
   ([name head body]
      (let [occurrences (vec (map (fn [[op pat]] [op (walk/postwalk
                                                      (fn [t] (get {'& ::&
@@ -363,8 +373,7 @@
                                                      (collect-vars bindform)
                                                      bindform expr))
                                       let-bindings)]
-                 :bodyfn (chrfn ~name [~store-alias ~@(collect-vars body)] ~body)
-                 }))))
+                 :bodyfn (chrfn ~name [~store-alias ~@(collect-vars body)] ~body)}))))
 
 ;---------------- Examples ---------------------
 
