@@ -118,7 +118,7 @@
                                (filter
                                 #(satisfies-guards? root-store % guards)
                                 (map #(let-bind root-store (assoc substs term %) let-binders) store))
-                               (if (get store term) [substs] []))
+                               (if (contains? store term) [substs] []))
                              [])
          (= ::& term) (let [rest (first next-terms)
                             [grnd-binders _ next-ground] (sort-let-binders let-binders (conj (keys substs) rest))                            
@@ -132,7 +132,7 @@
                             (filter
                              #(satisfies-guards? root-store % guards)
                              (map #(let-bind root-store (assoc substs term % rest []) let-binders) store))
-                            (if (get store term) [(let-bind root-store (assoc substs rest []) let-binders)] [])))
+                            (if (contains? store term) [(let-bind root-store (assoc substs rest []) let-binders)] [])))
                         ())
          (variable? term) (if (map? store)
                             (let [[grnd-binders ungrnd-binders next-ground] (sort-let-binders let-binders (conj (keys substs) term))
@@ -254,10 +254,10 @@
 
 (defn awake
   ([rules initial-constraints]
-     (do (swap! propagations (fn [_] 0))
+     (do (reset! propagations 0)
          (awake {} rules (first initial-constraints) (rest initial-constraints) #{} nil)))
   ([rules store initial-constraints]
-     (do (swap! propagations (fn [_] 0))
+     (do (reset! propagations 0)
          (awake store rules (first initial-constraints) (rest initial-constraints) #{} nil)))
   ([store rules active-constraint queued-constraints prop-history continued-rule-matches]
      (if active-constraint
@@ -269,9 +269,11 @@
                 (fn [[fired-rule substs next-store new-constraints]]
                   (let [{kept :+ removed :-} (group-pairs (map (fn [[op pat]] [op (rewrite pat substs)])
                                                                (:head fired-rule)))]
-                    (not= (into #{} (concat kept removed))
-                          (into #{} (concat kept new-constraints))))
-                  #_(not (prop-history [fired-rule substs new-constraints])))
+                    (and (not= (into #{} (concat kept removed))
+                               (into #{} (concat kept new-constraints)))
+                         (if (:tabled fired-rule)
+                           (not (prop-history [fired-rule substs new-constraints]))
+                           true))))
                 (map (fn [[fired-rule substs next-store]]
                        [fired-rule substs next-store (fire-rule fired-rule substs next-store)])
                      (or continued-rule-matches
@@ -281,7 +283,9 @@
            (let [_ (bench-here :awake-found t1)
                  t2 (System/nanoTime)                 
                  _ (trace [:awake] [(map (fn [[op pat]] [op (rewrite pat substs)]) (:head fired-rule))])                 
-                 next-history prop-history #_(into prop-history [[fired-rule substs new-constraints]])
+                 next-history (if (:tabled fired-rule)
+                                (into prop-history [[fired-rule substs new-constraints]])
+                                prop-history) 
                  {kept-awake [:+ true],
                   kept-asleep [:+ false]}
                  ,  (group-pairs (map (fn [[op pat]]
@@ -291,7 +295,7 @@
                  [next-active & next-queued] (concat new-constraints
                                                      kept-awake
                                                      queued-constraints)]
-             (trace [:awake :firing] [(:name fired-rule) "on store:" (unwrap store)"::"active-constraint"::" queued-constraints
+             (trace [:awake :firing] [(:name fired-rule) "on store:" store "::"active-constraint"::" queued-constraints
                                       "kept-awake:" kept-awake "kept-asleep:" kept-asleep "creating" new-constraints "with subs:" substs])
              (bench-here (:name fired-rule) t2)
              #_"If no constraints to be removed, maintain same store and position within the iterator."
@@ -354,6 +358,7 @@
                                              (partition 2 head))))
            store-alias (or (last (map second (filter (fn [[op pat]] (= :store op)) (partition 2 head))))
                            'store)
+           tabled? (or (:tabled (meta name)) (:tabled (meta head)) (:tabled (meta body)))
            variables (into #{} (for [pattern (concat (map second occurrences)
                                                      (map first let-bindings))
                                      term ((fn gather [f] (cond (symbol? f) #{f}
@@ -373,6 +378,7 @@
                                                      (collect-vars bindform)
                                                      bindform expr))
                                       let-bindings)]
+                 :tabled ~tabled?
                  :bodyfn (chrfn ~name [~store-alias ~@(collect-vars body)] ~body)}))))
 
 ;---------------- Examples ---------------------
