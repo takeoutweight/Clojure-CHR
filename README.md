@@ -1,6 +1,13 @@
-Quick little implementation of CHR in Clojure
+Quick little implementation of CHR in Clojure. Attempting to roughly follow CHR2 as described
+in Peter Van Weert's dissertation [Extension and Optimising Compilation of Constraint Handling Rules](https://lirias.kuleuven.be/bitstream/123456789/266875/1/thesis.pdf)
+
+Disclaimer:
+
+Set semantics is currently baked in. Propagation history is opt-in. No "aggregates" semantics
+yet. No optimizations to speak of.
 
 _Not tested. Don't build bridges that depend on this code._
+
 
 Use the RULE macro for CHR-like definitions:
 --------------------------------------------
