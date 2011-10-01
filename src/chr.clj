@@ -25,14 +25,21 @@
 
 (defn dissoc-constraint
   [store [term & rst]]
+  (trace [:dissoc-constraint]
+         ["store:" store
+          "term:" term
+          "rst:" rst
+          "store Type" (type store)])
   (no-bench
    :dissoc-constraint
-   (if (empty? rst)
-     (set/difference store #{term})
-     (let [b (dissoc-constraint (get store term) rst)]
-       (if (empty? b)
-         (dissoc store term)
-         (assoc store term b))))))
+   (if (= ::& term)
+     (dissoc-constraint store (first rst))
+     (if (empty? rst)
+       (set/difference store #{term})
+       (let [b (dissoc-constraint (get store term) rst)]
+         (if (empty? b)
+           (dissoc store term)
+           (assoc store term b)))))))
 
 (defn impose-constraint
   [store constraint]
@@ -167,12 +174,14 @@
     store))
 
 (defn store?
-  [t] (map? t))
+  [t] (and (map? t)
+           (every? coll? (vals t))))
 
 (defn find-matches-recursive
   "descends into nested stores to find matches."
   ([store pattern] (find-matches-recursive store [] pattern))
   ([store guards pattern]
+     (trace [:find-matches-recursive] ["store" store "pat" pattern "guards" guards])
      (concat (find-matches store guards pattern)
              (mapcat #(find-matches-recursive % guards pattern)
                      (filter store? (store-values store))))))
