@@ -166,6 +166,18 @@
   ([root-store store substs guards let-binders terms]
      (find-matches* root-store store substs guards let-binders terms)))
 
+(defmacro gather-matches
+  "lvar introduces lvar(s) to match in the pattern.
+   Can be a single lvar, returning a seq of values for matched lvar,
+   or a vec of lvars in which case will return a seq of tuples
+   representing matched values."
+  [lvar & store-guards-pattern]
+  (if (vector? lvar)
+    `(exists ~lvar (map (fn [m#] (vec (map (fn [v#] (get m# v#)) ~lvar)))
+                        (find-matches ~@store-guards-pattern)))
+    `(exists [~lvar] (map (fn [m#] (get m# ~lvar))
+                          (find-matches ~@store-guards-pattern)))))
+
 (defn store-values
   "flat list of every value in a store (not grouped by constraints)"
   [store]
