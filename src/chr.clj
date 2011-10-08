@@ -12,7 +12,7 @@
   [x]
   (with-meta x {::variable true}))
 
-(defmacro exists
+(defmacro fresh
   [varlist & body]
   `(let [~@(mapcat (fn [v] [v `(variable (quote ~v))]) varlist)]
      ~@body))
@@ -173,9 +173,9 @@
    representing matched values."
   [lvar & store-guards-pattern]
   (if (vector? lvar)
-    `(exists ~lvar (map (fn [m#] (vec (map (fn [v#] (get m# v#)) ~lvar)))
+    `(fresh ~lvar (map (fn [m#] (vec (map (fn [v#] (get m# v#)) ~lvar)))
                         (find-matches ~@store-guards-pattern)))
-    `(exists [~lvar] (map (fn [m#] (get m# ~lvar))
+    `(fresh [~lvar] (map (fn [m#] (get m# ~lvar))
                           (find-matches ~@store-guards-pattern)))))
 
 (defn store-values
@@ -389,7 +389,7 @@
                           ((fn gather [f] (cond (variables f) #{f}
                                                 (coll? f) (apply set/union (map gather f))
                                                 :else nil)) form))]
-       `(exists ~(vec variables)
+       `(fresh ~(vec variables)
                 {:name (quote ~name)
                  :head ~occurrences
                  :guards [~@(map (fn [g] `(chrfn ~name [~store-alias ~@(collect-vars g)] ~g)) guards)]
@@ -404,7 +404,7 @@
 
 ;---------------- Examples ---------------------
 
-(def leq-rules (exists [x y z a b eq eq1 eq2 c d]
+(def leq-rules (fresh [x y z a b eq eq1 eq2 c d]
                        [{:name :Reflexivity
                          :head [[:- [:leq d d]]]}
                         
@@ -448,7 +448,7 @@
                               [(dec length) 0]))))
 
 
-(def gcd-rules (exists [n m]
+(def gcd-rules (fresh [n m]
                        [{:head [[:- [:gcd 0]]]}
                         {:head [[:+ [:gcd n]]
                                 [:- [:gcd m]]]
