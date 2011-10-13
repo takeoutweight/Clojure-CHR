@@ -38,7 +38,7 @@ Use the RULE macro for CHR-like definitions:
 
 The RULE macro is just sugar; rules can be constructed directly:
 
-    (def leq-rules (exists [x y z]
+    (def leq-rules (fresh [x y z]
                        [{:head [[:- [:leq x x]]]}
                         {:head [[:- [:leq x y]]
                                 [:- [:leq y x]]]
@@ -52,7 +52,7 @@ The RULE macro is just sugar; rules can be constructed directly:
       (unwrap (awake leq-rules (map (fn [[l u]] [:leq l u]) pairs-o-symbols))))`
 
 
-    (def gcd-rules (exists [n m]
+    (def gcd-rules (fresh [n m]
                        [{:head [[:- [:gcd 0]]]}
                         {:head [[:+ [:gcd n]]
                                 [:- [:gcd m]]]
