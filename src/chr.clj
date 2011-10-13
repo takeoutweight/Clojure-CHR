@@ -3,14 +3,15 @@
   (:require [clojure.set :as set]
             [clojure.walk :as walk]))
 
+(defrecord Variable [name])
 (defn variable? [x]
-  (::variable (meta x)))
+  (instance? Variable x))
 
 (defn variable
   "No effort expended to make variables hygenic.
    Scope ranges over entire rules (head & body)."
   [x]
-  (with-meta x {::variable true}))
+  (->Variable x))
 
 (defmacro fresh
   [varlist & body]
@@ -108,7 +109,7 @@
   ([root-store store substs guards let-binders [term & next-terms]]     
      (no-bench
       :find-matches
-      (let [term (get substs term term)]
+      (let [term (if (variable? term) (get substs term term) term)]
         (cond
          (vector? term) (let [[grnd-binders ungrnd-binders next-ground] (sort-let-binders let-binders (concat (keys substs) term))
                               [grnd-guards ungrnd-guards] (sort-guards guards next-ground)]
@@ -211,10 +212,10 @@
   [root-store store substs guards let-binders [pattern & rst]]
   (if pattern
     (let [[grnd-binders ungrnd-binders next-ground]
-          , (trace [:mh-letbinders] ["store" store "root-store" root-store "pattern" pattern "->"
+          , (trace [:mh-letbinders] ["store" store "root-store" root-store "pattern" pattern "subts" substs "->"
                                      (sort-let-binders (partial-apply-chrfns let-binders substs) (concat (flatten pattern) (keys substs)))])
           [grnd-guards ungrnd-guards] (sort-guards (partial-apply-chrfns guards substs) next-ground)
-          subbed-pat (bench :mh-rewrite (rewrite pattern substs)) 
+          subbed-pat (trace [:mh-rewrite] ["lvar sig:" (map variable? (rewrite pattern substs)) (bench :mh-rewrite (rewrite pattern substs))]) 
           next-substs (bench :mh-find-matches (find-matches root-store store substs grnd-guards grnd-binders subbed-pat))]
       (trace [:match-head] ["Matched on " pattern "with subs" next-substs "with guards"(map first grnd-guards) ])
       (when (and (empty? rst)  (not (empty? ungrnd-guards)))
@@ -234,13 +235,13 @@
         :let [[grnd-binders ungrnd-binders newly-ground]
               , (bench :sort-guards
                        (do
-                         (trace [:matching-rule-seq] ["initial binders with" pattern "on store" store "with AC" active-constraint])
+                         (trace [:matching-rule-seq] ["initial binders with" pattern "variable sig:" (map variable? pattern) "on store" store "with AC" active-constraint])
                          (sort-let-binders (:let-binders rule) pattern)))
               [grnd-guards ungrnd-guards] (bench :sort-guards
                                                  (sort-guards (:guards rule) newly-ground))
               _ (trace [:matching-rule-seq] ["Unground guards" (map first ungrnd-guards)])]
         next-substs (bench :find-matches
-                           (find-matches store (impose-constraint {} active-constraint) {} grnd-guards grnd-binders pattern))
+ (find-matches store (impose-constraint {} active-constraint) {} grnd-guards grnd-binders pattern))
         [sibling-substs s0] (trace [:awake :search]
                                    ["subs" next-substs
                                     "on pattern:" pattern
