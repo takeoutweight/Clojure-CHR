@@ -20,6 +20,8 @@
 
 (defn rewrite
   [pattern rewrite-map]
+  (when (some #(not (instance? clojure.lang.Symbol (:name %))) (keys rewrite-map))
+    (trace [:rewrite :error] [pattern rewrite-map]))
   (no-bench
    :rewrite
    (map (fn [t] (get rewrite-map t t)) pattern)))
@@ -100,9 +102,16 @@
 (defn let-bind
   "returns the substs map modified by the let-binder"
   [root-store substs let-binders]
-  (reduce (fn [s [args _ bfn]] (merge s (apply bfn root-store (rewrite args s))))
-          substs
-          let-binders))
+  (trace [:let-bind]
+         [substs "->" (reduce (fn [s [args _ bfn]] (merge s
+                                                          (let [bindings (apply bfn root-store (rewrite args s))]
+                                                            (when (some #(not (instance? clojure.lang.Symbol (:name %)))
+                                                                        (keys bindings))
+                                                              (trace [:let-bind :error] ["roots" root-store  "current subs" s "bindings" bindings "args" args "rewritten to" (rewrite args s) "bfn" bfn])
+                                                              (throw (Exception. "Bad type for variable binding. Check the let binder.")))
+                                                            bindings)))
+                              substs
+                              let-binders)]))
 
 (defn find-matches*
   "Returns a seq of substitution maps, arity of pattern must be matched."  
@@ -357,7 +366,7 @@
     `[~(vec (drop 1 argform))
       ~(vec new-vars)
       (fn ~name ~argform
-        (let [~@(mapcat (fn [alias v] [alias `(variable ~v)]) new-var-aliases new-vars)
+        (let [~@(mapcat (fn [alias v] [alias v]) new-var-aliases new-vars)
               ~bindform ~expr]
           (hash-map ~@(interleave new-var-aliases new-vars))))]))
 
